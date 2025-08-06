@@ -5,6 +5,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const ALLOWED_ANDROID_HASHES = [
         "32:A2:FC:74:D7:31:10:58:59:E5:A8:5D:F1:6D:95:F1:02:D8:5B:22:09:9B:80:64:C5:D8:91:5C:61:DA:D1:E0"
     ];
+    // The URL for the related origins request. 
+    // See https://github.com/deephand/netlify-related-origin for the configuration.
+    const RELATED_ORIGIN = 'deephand-related-origin.netlify.app';
 
     // --- DOM Elements ---
     const statusContainer = document.getElementById('status-checks');
@@ -14,6 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const logDisplay = document.getElementById('log-display');
     const credentialsListDiv = document.getElementById('credentials-list');
     const clearStorageBtn = document.getElementById('clear-storage-btn');
+    const relatedOriginsCheckbox = document.getElementById('related-origins-checkbox');
 
     // --- Utility Functions ---
 
@@ -279,10 +283,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             const challenge = crypto.getRandomValues(new Uint8Array(32));
+            const rpId = relatedOriginsCheckbox.checked ? RELATED_ORIGIN : window.location.hostname;
+            log(`Using RP ID: ${rpId}`);
 
             const createOptions = {
                 challenge,
-                rp: { name: 'WebAuthn WebView Demo', id: window.location.hostname },
+                rp: { name: 'WebAuthn WebView Demo', id: rpId },
                 user: { id: crypto.getRandomValues(new Uint8Array(16)), name: username, displayName: username },
                 pubKeyCredParams: [ { type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 } ],
                 authenticatorSelection: {
@@ -348,12 +354,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 .map(cb => ({ type: 'public-key', id: base64urlToBuffer(cb.value) }));
             
             const challenge = crypto.getRandomValues(new Uint8Array(32));
+            const rpId = relatedOriginsCheckbox.checked ? RELATED_ORIGIN : window.location.hostname;
+            log(`Using RP ID: ${rpId}`);
 
             const getOptions = {
                 challenge,
                 timeout: 60000,
                 userVerification: 'required',
-                rpId: window.location.hostname,
+                rpId: rpId,
             };
 
             if (selectedCreds.length > 0) {
