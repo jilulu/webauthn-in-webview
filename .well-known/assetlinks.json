@@ -1,0 +1,16 @@
+[
+  {
+    "relation" : [
+      "delegate_permission/common.handle_all_urls",
+      "delegate_permission/common.get_login_creds"
+    ],
+    "target" : {
+      "namespace" : "android_app",
+      "package_name" : "com.example.webviewpasskey",
+      "sha256_cert_fingerprints" : [
+	"0C:D2:FF:5F:B4:69:C7:8E:FC:B0:D7:5E:31:C6:3C:F7:2E:29:00:2B:2B:AF:71:01:52:51:04:49:B9:9B:2F:F3"
+      ]
+    }
+  }
+]
+
