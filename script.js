@@ -162,18 +162,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const performInitialChecks = async () => {
         log('Starting environment checks...');
 
-        // 1. Check for Local Storage (only show a message on failure)
-        let localStorageAvailable = false;
+        // 1. Check for Credential Storage API
+        let storageApiAvailable = false;
         try {
-            localStorage.setItem('__test', 'test');
-            localStorage.removeItem('__test');
-            localStorageAvailable = true;
+            const resp = await fetch('/api/credentials');
+            storageApiAvailable = resp.ok;
         } catch (e) {
-            localStorageAvailable = false;
+            storageApiAvailable = false;
         }
-        if (!localStorageAvailable) {
-            renderStatus('Local Storage', false, 'Required for this demo to store passkeys.');
-            log('Local Storage is not available. This demo will not be able to save credentials.', null, 'error');
+        renderStatus('Credential Storage API', storageApiAvailable,
+            storageApiAvailable
+                ? 'KV-backed credential storage is reachable.'
+                : 'Could not reach /api/credentials. Ensure the KV binding PASSKEY_KV is configured in the Cloudflare Pages dashboard.');
+        if (!storageApiAvailable) {
+            log('Credential Storage API is not available. Passkey save/load will not work.', null, 'error');
         }
 
         // 2. Check for WebAuthn API (PublicKeyCredential)
@@ -191,7 +193,7 @@ document.addEventListener('DOMContentLoaded', () => {
         renderStatus('Conditional Mediation', conditionalMediationAvailable, 'Also known as "Passkey Autofill". May not be implemented in WebViews based on Chromium.');
         
         log('Environment checks complete.');
-        loadCredentialsFromStorage();
+        await loadCredentialsFromStorage();
     };
 
     /**
@@ -234,9 +236,19 @@ document.addEventListener('DOMContentLoaded', () => {
     /**
      * Loads credentials from local storage and displays them in the options panel.
      */
-    const loadCredentialsFromStorage = () => {
-        const creds = JSON.parse(localStorage.getItem('webauthn-credentials') || '[]');
-        credentialsListDiv.innerHTML = ''; 
+    const loadCredentialsFromStorage = async () => {
+        let creds = [];
+        try {
+            const resp = await fetch('/api/credentials');
+            if (resp.ok) {
+                creds = await resp.json();
+            } else {
+                log('Failed to load credentials from API', { status: resp.status }, 'error');
+            }
+        } catch (e) {
+            log('Network error loading credentials', { message: e.message }, 'error');
+        }
+        credentialsListDiv.innerHTML = '';
 
         if (creds.length === 0) {
             credentialsListDiv.innerHTML = '<p class="text-gray-500">No passkeys created yet.</p>';
@@ -262,11 +274,15 @@ document.addEventListener('DOMContentLoaded', () => {
      * Saves a credential to local storage.
      * @param {{username: string, id: string, rawId: string, pubKey: string, alg: number}} cred The credential object.
      */
-    const saveCredential = (cred) => {
-        const creds = JSON.parse(localStorage.getItem('webauthn-credentials') || '[]');
-        if (!creds.some(c => c.id === cred.id)) {
-            creds.push(cred);
-            localStorage.setItem('webauthn-credentials', JSON.stringify(creds));
+    const saveCredential = async (cred) => {
+        const resp = await fetch('/api/credentials', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(cred),
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(`Failed to save credential: ${err.error || resp.status}`);
         }
     };
     
@@ -334,10 +350,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 pubKey: bufferToBase64url(credential.response.getPublicKey()),
                 alg: credential.response.getPublicKeyAlgorithm()
             };
-            saveCredential(newCred);
-            log('✅ Credential stored in local storage.', newCred, 'success');
+            await saveCredential(newCred);
+            log('✅ Credential stored via API.', newCred, 'success');
             usernameInput.value = '';
-            loadCredentialsFromStorage();
+            await loadCredentialsFromStorage();
 
         } catch (err) {
             log('Error during credential creation', { name: err.name, message: err.message }, 'error');
@@ -383,7 +399,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
             log('--- Verifying assertion (simulated server-side) ---');
 
-            const allCreds = JSON.parse(localStorage.getItem('webauthn-credentials') || '[]');
+            let allCreds = [];
+            try {
+                const credsResp = await fetch('/api/credentials');
+                if (credsResp.ok) {
+                    allCreds = await credsResp.json();
+                }
+            } catch (e) {
+                throw new Error(`Could not load credentials for verification: ${e.message}`);
+            }
             const credToVerify = allCreds.find(c => c.id === bufferToBase64url(assertion.rawId));
 
             if (!credToVerify) {
@@ -453,7 +477,7 @@ document.addEventListener('DOMContentLoaded', () => {
         isConfirmingClear = false;
     };
 
-    const handleClearStorage = () => {
+    const handleClearStorage = async () => {
         if (!isConfirmingClear) {
             clearStorageBtn.textContent = 'Are you sure? Click again to clear';
             clearStorageBtn.classList.remove('bg-red-600', 'hover:bg-red-700', 'focus:ring-red-300');
@@ -463,12 +487,20 @@ document.addEventListener('DOMContentLoaded', () => {
             clearConfirmTimeout = setTimeout(() => {
                 resetClearButtonState();
                 log('Clear storage action timed out.', '', 'info');
-            }, 4000); 
+            }, 4000);
         } else {
             clearTimeout(clearConfirmTimeout);
-            localStorage.removeItem('webauthn-credentials');
-            log('Local storage cleared.', '', 'success');
-            loadCredentialsFromStorage();
+            try {
+                const resp = await fetch('/api/credentials', { method: 'DELETE' });
+                if (resp.ok || resp.status === 204) {
+                    log('All passkeys cleared.', '', 'success');
+                } else {
+                    log('Failed to clear passkeys from API', { status: resp.status }, 'error');
+                }
+            } catch (e) {
+                log('Network error clearing credentials', { message: e.message }, 'error');
+            }
+            await loadCredentialsFromStorage();
             resetClearButtonState();
         }
     };
