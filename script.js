@@ -1,12 +1,8 @@
+import { ALLOWED_ANDROID_HASHES, base64urlToBuffer, bufferToBase64url, bufferToColonHex, derToRawSignature, validateOrigin } from '/shared/utils.js';
+
 document.addEventListener('DOMContentLoaded', () => {
     // --- Configuration ---
-    // A list of trusted SHA-256 hashes of your Android app's signing certificate.
-    // The received hash will be compared against this list.
-    const ALLOWED_ANDROID_HASHES = [
-        "32:A2:FC:74:D7:31:10:58:59:E5:A8:5D:F1:6D:95:F1:02:D8:5B:22:09:9B:80:64:C5:D8:91:5C:61:DA:D1:E0",
-	"0C:D2:FF:5F:B4:69:C7:8E:FC:B0:D7:5E:31:C6:3C:F7:2E:29:00:2B:2B:AF:71:01:52:51:04:49:B9:9B:2F:F3"
-    ];
-    // The URL for the related origins request. 
+    // The URL for the related origins request.
     // See https://github.com/deephand/netlify-related-origin for the configuration.
     const RELATED_ORIGIN = 'deephand-related-origin.netlify.app';
 
@@ -21,51 +17,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const relatedOriginsCheckbox = document.getElementById('related-origins-checkbox');
 
     // --- Utility Functions ---
-
-    /**
-     * Decodes a Base64URL string into an ArrayBuffer.
-     * @param {string} str The Base64URL string to decode.
-     * @returns {ArrayBuffer}
-     */
-    const base64urlToBuffer = (str) => {
-        let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
-        const pad = base64.length % 4;
-        if (pad) {
-            if (pad === 2) base64 += '==';
-            else if (pad === 3) base64 += '=';
-            else throw new Error('Invalid base64url string!');
-        }
-
-        const binaryStr = atob(base64);
-        const len = binaryStr.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-            bytes[i] = binaryStr.charCodeAt(i);
-        }
-        return bytes.buffer;
-    };
-
-    /**
-     * Encodes an ArrayBuffer into a Base64URL string.
-     * @param {ArrayBuffer} buffer The ArrayBuffer to encode.
-     * @returns {string}
-     */
-    const bufferToBase64url = (buffer) => {
-        const bytes = new Uint8Array(buffer);
-        const binaryStr = String.fromCharCode.apply(null, bytes);
-        return btoa(binaryStr).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-    };
-
-    /**
-     * Converts an ArrayBuffer to a colon-separated hexadecimal string.
-     * @param {ArrayBuffer} buffer The ArrayBuffer to convert.
-     * @returns {string}
-     */
-    const bufferToColonHex = (buffer) => {
-        return Array.from(new Uint8Array(buffer))
-            .map(b => b.toString(16).padStart(2, '0').toUpperCase())
-            .join(':');
-    };
 
     /**
      * Logs messages to the on-screen console.
@@ -109,54 +60,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- WebAuthn Logic ---
 
     /**
-     * Converts an ASN.1 DER-encoded signature to a raw (r,s) format.
-     * @param {ArrayBuffer} derSignature The DER-encoded signature.
-     * @returns {ArrayBuffer|null} The raw signature or null if parsing fails.
-     */
-    const derToRawSignature = (derSignature) => {
-        try {
-            const signature = new Uint8Array(derSignature);
-            
-            // Minimal parser for a DER sequence of two integers (r and s)
-            if (signature[0] !== 0x30) throw new Error("Not a DER sequence.");
-            
-            let offset = 2; // Skip sequence and length
-            
-            // Parse r
-            if (signature[offset] !== 0x02) throw new Error("Expected integer for r.");
-            offset++;
-            let rLength = signature[offset++];
-            if (signature[offset] === 0x00) { // Handle leading zero
-                offset++;
-                rLength--;
-            }
-            const r = signature.slice(offset, offset + rLength);
-            offset += rLength;
-
-            // Parse s
-            if (signature[offset] !== 0x02) throw new Error("Expected integer for s.");
-            offset++;
-            let sLength = signature[offset++];
-            if (signature[offset] === 0x00) { // Handle leading zero
-                offset++;
-                sLength--;
-            }
-            const s = signature.slice(offset, offset + sLength);
-
-            // Concatenate r and s to form a raw 64-byte signature
-            const rawSignature = new Uint8Array(64);
-            rawSignature.set(r, 32 - r.length);
-            rawSignature.set(s, 64 - s.length);
-            
-            return rawSignature.buffer;
-        } catch(e) {
-            log('Failed to parse DER signature', {name: e.name, message: e.message}, 'error');
-            return null;
-        }
-    };
-
-
-    /**
      * Checks the environment for required APIs and features.
      */
     const performInitialChecks = async () => {
@@ -194,43 +97,6 @@ document.addEventListener('DOMContentLoaded', () => {
         
         log('Environment checks complete.');
         await loadCredentialsFromStorage();
-    };
-
-    /**
-     * Validates the origin from clientDataJSON.
-     * @param {string} receivedOrigin - The origin string from the authenticator.
-     * @throws Will throw an error if the origin is not valid.
-     */
-    const validateOrigin = (receivedOrigin) => {
-        const expectedWebOrigin = window.location.origin;
-        let isOriginValid = false;
-
-        // Check 1: Standard web origin
-        if (receivedOrigin === expectedWebOrigin) {
-            isOriginValid = true;
-        } 
-        // Check 2: Android App origin
-        else if (receivedOrigin.startsWith('android:apk-key-hash:')) {
-            const receivedHashBase64 = receivedOrigin.substring('android:apk-key-hash:'.length).trim();
-            try {
-                const receivedHashBuffer = base64urlToBuffer(receivedHashBase64);
-                const receivedHashHex = bufferToColonHex(receivedHashBuffer);
-                
-                log(`Received Android Hash: ${receivedHashHex}`);
-
-                if (ALLOWED_ANDROID_HASHES.includes(receivedHashHex)) {
-                    isOriginValid = true;
-                }
-            } catch (e) {
-                log('Error decoding Android origin hash', e.message, 'error');
-                isOriginValid = false;
-            }
-        }
-
-        if (!isOriginValid) {
-            throw new Error(`Origin mismatch! \nExpected Web Origin: ${expectedWebOrigin} \nOR Expected Android Hash In: [${ALLOWED_ANDROID_HASHES.join(', ')}] \nReceived: ${receivedOrigin}`);
-        }
-        log('✅ Origin verified');
     };
 
     /**
@@ -336,7 +202,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             log('✅ Challenge verified');
 
-            validateOrigin(clientDataJSON.origin);
+            validateOrigin(clientDataJSON.origin, window.location.origin, ALLOWED_ANDROID_HASHES);
+            log('✅ Origin verified');
             
             if (clientDataJSON.type !== 'webauthn.create') {
                 throw new Error(`Type mismatch! \nExpected: 'webauthn.create' \nReceived: '${clientDataJSON.type}'`);
@@ -424,7 +291,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             log('✅ Challenge verified');
 
-            validateOrigin(clientDataJSON.origin);
+            validateOrigin(clientDataJSON.origin, window.location.origin, ALLOWED_ANDROID_HASHES);
+            log('✅ Origin verified');
 
             const authenticatorData = assertion.response.authenticatorData;
             const clientDataHash = await crypto.subtle.digest('SHA-256', assertion.response.clientDataJSON);
@@ -441,9 +309,6 @@ document.addEventListener('DOMContentLoaded', () => {
             log('Imported public key for verification.');
 
             const rawSignature = derToRawSignature(assertion.response.signature);
-            if (!rawSignature) {
-                throw new Error("Failed to parse signature from authenticator.");
-            }
 
             const signatureIsValid = await crypto.subtle.verify(
                 { name: 'ECDSA', hash: { name: 'SHA-256' } },
